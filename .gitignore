@@ -17,3 +17,4 @@ dist/
 
 # 系统杂项
 .DS_Store
+version.txt
