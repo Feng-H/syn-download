@@ -22,6 +22,12 @@ GOOD_SID = "test-sid-12345"
 REMOTE_PATH = "/media/Travel Notes/Trip Recording Day 01.mp3"
 
 
+def _ts(y, m, d):
+    """指定日期正午(UTC)的 unix 时间戳,用作 mock 修改时间。"""
+    import calendar
+    return calendar.timegm((y, m, d, 12, 0, 0))
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj):
         body = json.dumps(obj).encode()
@@ -60,10 +66,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"success": True, "data": {"files": [
                 {"name": "Travel Notes", "path": f"{folder}/Travel Notes", "isdir": True},
                 {"name": "readme.txt", "path": f"{folder}/readme.txt", "isdir": False,
-                 "additional": {"size": 5}},
+                 "additional": {"size": 5, "time": _ts(2026, 8, 1)}},
                 {"name": "Trip Recording Day 01.mp3",
                  "path": REMOTE_PATH, "isdir": False,
-                 "additional": {"size": SIZE}}]}})
+                 "additional": {"size": SIZE, "time": _ts(2026, 9, 10)}},
+                {"name": "Old Notes 2025.txt", "path": f"{folder}/Old Notes 2025.txt",
+                 "isdir": False, "additional": {"size": 9, "time": _ts(2025, 12, 31)}},
+                {"name": "Future Plan.txt", "path": f"{folder}/Future Plan.txt",
+                 "isdir": False, "additional": {"size": 3, "time": _ts(2026, 12, 25)}}]}})
 
         if api == "SYNO.FileStation.Download":
             path = json.loads(q.get("path", ['""'])[0])

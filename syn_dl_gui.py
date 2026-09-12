@@ -11,6 +11,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+from datetime import date
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -160,6 +161,29 @@ class App:
         self.btn_refresh.pack(side="left", padx=6)
         self.lbl_path = ttk.Label(bar, text="(登录后显示共享文件夹)", foreground="#555")
         self.lbl_path.pack(side="left", padx=8)
+
+        # —— 日期筛选行 ——
+        fbar = ttk.Frame(browse)
+        fbar.pack(fill="x", padx=6, pady=(2, 0))
+        ttk.Label(fbar, text="修改日期筛选:").pack(side="left")
+        self.var_fmode = tk.StringVar(value="全部")
+        self.cmb_fmode = ttk.Combobox(
+            fbar, textvariable=self.var_fmode, state="readonly", width=8,
+            values=("全部", "早于", "晚于", "介于"))
+        self.cmb_fmode.pack(side="left", padx=(2, 8))
+        ttk.Label(fbar, text="日期A:").pack(side="left")
+        self.var_fdate_a = tk.StringVar()
+        e_a = ttk.Entry(fbar, textvariable=self.var_fdate_a, width=11)
+        e_a.pack(side="left", padx=(2, 8))
+        ttk.Label(fbar, text="日期B:").pack(side="left")
+        self.var_fdate_b = tk.StringVar()
+        e_b = ttk.Entry(fbar, textvariable=self.var_fdate_b, width=11)
+        e_b.pack(side="left", padx=2)
+        self.lbl_fhint = ttk.Label(fbar, text="格式 YYYY-MM-DD", foreground="#888")
+        self.lbl_fhint.pack(side="left", padx=10)
+        self.cmb_fmode.bind("<<ComboboxSelected>>", lambda _e: self._render_tree())
+        for ent in (e_a, e_b):
+            ent.bind("<KeyRelease>", lambda _e: self._render_tree())
 
         cols = ("type", "size")
         self.tree = ttk.Treeview(browse, columns=cols, selectmode="extended")
@@ -406,15 +430,81 @@ class App:
         self.cwd = path
         self.entries = entries
         self.lbl_path.config(text=path)
+        self._render_tree()
+
+    # ---------------------------------------------------------------- 日期筛选与渲染
+    def _render_tree(self):
+        """按当前筛选条件把 self.entries 渲染到浏览表(iid → entry 映射)。"""
         self.tree.delete(*self.tree.get_children())
-        if path != "/":
+        self._row_entry = {}
+        if getattr(self, "cwd", "/") != "/":
             self.tree.insert("", "end", iid="up", text="..(上级)", values=("上级", ""))
-        for e in entries:
+
+        mode = self.var_fmode.get()
+        start = end = None
+        hint = ""
+        if mode != "全部":
+            start = self._parse_date(self.var_fdate_a.get())
+            end = self._parse_date(self.var_fdate_b.get()) if mode == "介于" else None
+            if mode == "介于":
+                if start is None or end is None:
+                    hint = "请输入有效的日期A和日期B"
+                elif start > end:
+                    hint = "日期A晚于日期B,已自动交换"
+                    start, end = end, start
+            elif start is None:
+                hint = "请输入有效的日期A"
+        if hint.startswith("请输入"):
+            mode = "全部"   # 日期无效时不做筛选,仅显示提示
+
+        shown = total = 0
+        for e in self.entries:
+            keep = True
+            if not e["isdir"]:
+                total += 1
+                keep = self._match_date(e.get("mtime"), mode, start, end)
+                if keep:
+                    shown += 1
+            if not keep:
+                continue
             name = e["name"] + ("/" if e["isdir"] else "")
             size = human(e["size"]) if e.get("size") else ""
-            self.tree.insert("", "end",
-                             values=("文件夹" if e["isdir"] else "文件", size),
-                             text=name, tags=("dir",) if e["isdir"] else ("file",))
+            mtime = date.fromtimestamp(e["mtime"]).isoformat() if e.get("mtime") else ""
+            iid = self.tree.insert(
+                "", "end", values=("文件夹" if e["isdir"] else "文件",
+                                   f"{size}  {mtime}" if mtime else size),
+                text=name)
+            self._row_entry[iid] = e
+
+        if hint:
+            color = "#c0392b" if hint.startswith("请输入") else "#888"
+            self.lbl_fhint.config(text=hint, foreground=color)
+        elif mode == "全部":
+            self.lbl_fhint.config(text="格式 YYYY-MM-DD", foreground="#888")
+        else:
+            self.lbl_fhint.config(text=f"筛选出 {shown}/{total} 个文件",
+                                  foreground="#1e8449")
+
+    @staticmethod
+    def _parse_date(s):
+        try:
+            return date.fromisoformat(s.strip())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _match_date(mtime, mode, start, end):
+        if mode == "全部" or not mtime:
+            return True
+        try:
+            d = date.fromtimestamp(mtime)
+        except Exception:
+            return True
+        if mode == "早于":
+            return d < start
+        if mode == "晚于":
+            return d > start
+        return start <= d <= end   # 介于(含两端)
 
     def refresh_dir(self):
         self.load_dir(getattr(self, "cwd", "/"))
@@ -433,7 +523,9 @@ class App:
         if iid == "up":
             self.go_up()
             return
-        entry = self.entries[self.tree.index(iid) - (1 if self.cwd != "/" else 0)]
+        entry = getattr(self, "_row_entry", {}).get(iid)
+        if not entry:
+            return
         if entry["isdir"]:
             self.load_dir(entry["path"])
         else:
@@ -451,8 +543,8 @@ class App:
         for iid in sel:
             if iid == "up":
                 continue
-            entry = self.entries[self.tree.index(iid) - (1 if self.cwd != "/" else 0)]
-            if not entry["isdir"]:
+            entry = getattr(self, "_row_entry", {}).get(iid)
+            if entry and not entry["isdir"]:
                 paths.append(entry)
         if not paths:
             messagebox.showinfo("提示", "请先选中要下载的文件(可按住 Ctrl/Cmd 多选)")

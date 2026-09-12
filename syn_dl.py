@@ -238,9 +238,11 @@ class SynClient:
                           "sort_direction": "asc"})
         out = []
         for f in data.get("files", []):
+            add = f.get("additional", {})
             out.append({"name": f.get("name", ""), "path": f["path"],
                         "isdir": bool(f.get("isdir")),
-                        "size": f.get("additional", {}).get("size")})
+                        "size": add.get("size"),
+                        "mtime": add.get("time")})   # 修改时间(unix 秒)
         return out
 
     def open_download(self, path, extra_headers=None):

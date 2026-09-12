@@ -80,8 +80,58 @@ def main():
         assert pump(root, 10, lambda: getattr(app, "cwd", "") == "/media"), \
             "进入目录超时"
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
-        mp3_row = texts["Trip Recording Day 01.mp3"]
+        assert "Trip Recording Day 01.mp3" in texts
         print("[gui] 浏览 /media ✔ 找到目标文件")
+
+        # 3.5) 修改日期筛选(mock 文件日期:2025-12-31 / 2026-08-01 /
+        #      2026-09-10 / 2026-12-25)
+        def visible():
+            return {app.tree.item(i)["text"] for i in app.tree.get_children()}
+
+        app.var_fmode.set("早于")
+        app.var_fdate_a.set("2026-01-01")
+        app._render_tree()
+        v = visible()
+        assert "Old Notes 2025.txt" in v and "Trip Recording Day 01.mp3" not in v
+        assert "readme.txt" not in v and "Future Plan.txt" not in v
+        assert "Travel Notes/" in v, "目录不应被筛选掉"
+
+        app.var_fmode.set("晚于")
+        app.var_fdate_a.set("2026-09-01")
+        app._render_tree()
+        v = visible()
+        assert {"Trip Recording Day 01.mp3", "Future Plan.txt"} <= v
+        assert "readme.txt" not in v and "Old Notes 2025.txt" not in v
+
+        app.var_fmode.set("介于")
+        app.var_fdate_a.set("2026-07-01")
+        app.var_fdate_b.set("2026-09-30")
+        app._render_tree()
+        v = visible()
+        assert {"readme.txt", "Trip Recording Day 01.mp3"} <= v
+        assert "Old Notes 2025.txt" not in v and "Future Plan.txt" not in v
+        assert "筛选出 2/4" in app.lbl_fhint.cget("text"), app.lbl_fhint.cget("text")
+
+        # 日期 A>B 自动交换
+        app.var_fdate_a.set("2026-09-30")
+        app.var_fdate_b.set("2026-07-01")
+        app._render_tree()
+        assert "Trip Recording Day 01.mp3" in visible()
+
+        # 无效日期提示
+        app.var_fmode.set("早于")
+        app.var_fdate_a.set("not-a-date")
+        app._render_tree()
+        assert "请输入有效的日期A" in app.lbl_fhint.cget("text")
+
+        # 复原:全部
+        app.var_fmode.set("全部")
+        app._render_tree()
+        assert len([i for i in app.tree.get_children()
+                    if i != "up"]) == 5, "全部模式下应有 5 项"
+        texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
+        mp3_row = texts["Trip Recording Day 01.mp3"]
+        print("[gui] 修改日期筛选(早于/晚于/介于/边界)✔")
 
         # 4) 选中并下载
         app.tree.selection_set(mp3_row)
