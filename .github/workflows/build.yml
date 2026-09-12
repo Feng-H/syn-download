@@ -1,0 +1,84 @@
+name: build-release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: 核心测试(多线程/断点续传/会话重登/QuickConnect)
+        run: |
+          python test_core.py
+          python test_e2e.py
+          python test_qc.py
+      - name: GUI 自动化测试(虚拟显示)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb tk
+          xvfb-run -a python test_gui.py
+          xvfb-run -a python test_cred.py
+
+  build-windows:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller requests keyring
+      - name: 打包 SynDL.exe
+        run: pyinstaller --onefile --windowed --name SynDL --icon SynDL.ico
+          --collect-submodules keyring syn_dl_gui.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SynDL-windows-x64
+          path: dist/SynDL.exe
+          if-no-files-found: error
+
+  build-macos:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller requests keyring
+      - name: 打包 SynDL.app
+        run: |
+          pyinstaller --onefile --windowed --name SynDL --icon SynDL.icns \
+            --collect-submodules keyring syn_dl_gui.py
+          cd dist && zip -r SynDL-macos-applesilicon.zip SynDL.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SynDL-macos-applesilicon
+          path: dist/SynDL-macos-applesilicon.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/SynDL-windows-x64/SynDL.exe
+            artifacts/SynDL-macos-applesilicon/SynDL-macos-applesilicon.zip
+          generate_release_notes: true

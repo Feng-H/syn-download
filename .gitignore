@@ -1,0 +1,19 @@
+# 本地开发环境
+.venv/
+
+# Python 运行产物
+__pycache__/
+*.pyc
+
+# 本地打包产物(打包统一由 GitHub Actions 完成)
+build/
+dist/
+*.spec
+
+# 个人文件(测试下载的数据,绝不入库)
+*.mp3
+*.synstate
+*.synstate.tmp
+
+# 系统杂项
+.DS_Store
