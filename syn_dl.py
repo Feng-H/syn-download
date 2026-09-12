@@ -36,6 +36,7 @@ try:
 except ImportError:
     pass
 
+__version__ = "0.2.1"
 DEFAULT_HOST = ""                     # 留空:首次使用时询问,并记住上次地址
 SESSION_FILE = Path.home() / ".syn_dl_session.json"
 UA = "syn-dl/1.0"

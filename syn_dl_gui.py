@@ -16,9 +16,9 @@ from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from syn_dl import (AUTH_CODES, AbortDownload, AuthExpired, DEFAULT_HOST,
-                    RangeDownloader, SynClient, SynError, clear_credentials,
-                    clear_session, human, load_credentials, load_session,
-                    save_credentials, save_session)
+                    RangeDownloader, SynClient, SynError, __version__,
+                    clear_credentials, clear_session, human, load_credentials,
+                    load_session, save_credentials, save_session)
 
 POLL_MS = 300
 
@@ -103,7 +103,7 @@ class Task:
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("群晖下载器 Syn DL")
+        root.title(f"群晖下载器 SynDL v{__version__}")
         root.geometry("880x640")
         root.minsize(780, 560)
         self.client = None

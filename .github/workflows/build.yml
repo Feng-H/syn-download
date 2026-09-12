@@ -36,9 +36,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyinstaller requests keyring
+      - name: 生成版本信息
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"; [ "$VER" = "main" ] && VER=0.0.0
+          python make_version.py "$VER"
       - name: 打包 SynDL.exe
         run: pyinstaller --onefile --windowed --name SynDL --icon SynDL.ico
-          --collect-submodules keyring syn_dl_gui.py
+          --version-file version.txt --collect-submodules keyring syn_dl_gui.py
       - uses: actions/upload-artifact@v4
         with:
           name: SynDL-windows-x64
@@ -57,8 +62,13 @@ jobs:
       - run: pip install pyinstaller requests keyring
       - name: 打包 SynDL.app
         run: |
+          VER="${GITHUB_REF_NAME#v}"; [ "$VER" = "main" ] && VER=0.0.0
           pyinstaller --onefile --windowed --name SynDL --icon SynDL.icns \
             --collect-submodules keyring syn_dl_gui.py
+          plutil -replace CFBundleShortVersionString -string "$VER" \
+            dist/SynDL.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$VER" \
+            dist/SynDL.app/Contents/Info.plist
           cd dist && zip -r SynDL-macos-applesilicon.zip SynDL.app
       - uses: actions/upload-artifact@v4
         with:
