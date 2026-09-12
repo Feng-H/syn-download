@@ -8,6 +8,17 @@
 
 ## 下载安装(推荐)
 
+### macOS(推荐 Homebrew)
+
+```bash
+brew tap Feng-H/homebrew-tap
+brew install --cask Feng-H/tap/syndl
+```
+
+升级:`brew upgrade --cask Feng-H/tap/syndl`。
+
+### 其他方式
+
 到 [Releases](../../releases) 页面下载对应平台的安装包:
 
 | 平台 | 文件 | 说明 |
@@ -20,6 +31,15 @@
 - **macOS**:应用未做开发者签名,双击若被拦,请 **右键 → 打开**,或在
   系统设置 → 隐私与安全性 中点"仍要打开"。
 - **Windows**:SmartScreen 可能提示"更多信息 → 仍要运行"。
+
+### 发布新版本(维护者)
+
+```bash
+git tag v0.x.y && git push --tags     # CI 自动:测试 → 双平台打包 → GitHub Release
+```
+
+随后更新 [homebrew-tap](https://github.com/Feng-H/homebrew-tap) 中的
+`Casks/syndl.rb`(version、sha256、url 三处)。
 
 ## 功能
 
