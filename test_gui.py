@@ -80,11 +80,11 @@ def main():
         assert pump(root, 10, lambda: getattr(app, "cwd", "") == "/media"), \
             "进入目录超时"
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
-        assert "Trip Recording Day 01.mp3" in texts
-        print("[gui] 浏览 /media ✔ 找到目标文件")
+        assert "Travel Notes/" in texts, f"子目录缺失: {texts}"
+        print("[gui] 浏览 /media ✔")
 
-        # 3.5) 修改日期筛选(mock 文件:2025-12-31(数值格式)/ 2026-08-01 /
-        #      2026-09-10 / 2026-12-25 / 无时间戳)
+        # 3.5) 修改日期筛选(/media 层文件:2025-12-31(数值格式)/ 2026-08-01 /
+        #      2026-12-25 / 无时间戳;子目录内文件由 3.6 递归搜索覆盖)
         def visible():
             return {app.tree.item(i)["text"] for i in app.tree.get_children()}
 
@@ -92,7 +92,7 @@ def main():
         app.var_fdate_a.set("2026-01-01")
         app._render_tree()
         v = visible()
-        assert "Old Notes 2025.txt" in v and "Trip Recording Day 01.mp3" not in v
+        assert "Old Notes 2025.txt" in v
         assert "readme.txt" not in v and "Future Plan.txt" not in v
         assert "Travel Notes/" in v, "目录不应被筛选掉"
         assert "No Time Stamp.bin" in v, "无时间戳的文件应保留显示"
@@ -101,7 +101,7 @@ def main():
         app.var_fdate_a.set("2026-09-01")
         app._render_tree()
         v = visible()
-        assert {"Trip Recording Day 01.mp3", "Future Plan.txt"} <= v
+        assert "Future Plan.txt" in v
         assert "readme.txt" not in v and "Old Notes 2025.txt" not in v
 
         app.var_fmode.set("介于")
@@ -109,15 +109,15 @@ def main():
         app.var_fdate_b.set("2026-09-30")
         app._render_tree()
         v = visible()
-        assert {"readme.txt", "Trip Recording Day 01.mp3"} <= v
+        assert "readme.txt" in v
         assert "Old Notes 2025.txt" not in v and "Future Plan.txt" not in v
-        assert "筛选出 3/5" in app.lbl_fhint.cget("text"), app.lbl_fhint.cget("text")
+        assert "筛选出 2/4" in app.lbl_fhint.cget("text"), app.lbl_fhint.cget("text")
 
         # 日期 A>B 自动交换
         app.var_fdate_a.set("2026-09-30")
         app.var_fdate_b.set("2026-07-01")
         app._render_tree()
-        assert "Trip Recording Day 01.mp3" in visible()
+        assert "readme.txt" in visible()
 
         # 无效日期提示
         app.var_fmode.set("早于")
@@ -125,14 +125,52 @@ def main():
         app._render_tree()
         assert "请输入有效的日期A" in app.lbl_fhint.cget("text")
 
-        # 复原:全部
+        # 复原:全部(/media 层 = 1 目录 + 4 文件)
         app.var_fmode.set("全部")
         app._render_tree()
         assert len([i for i in app.tree.get_children()
-                    if i != "up"]) == 6, "全部模式下应有 6 项(1 目录 + 5 文件)"
+                    if i != "up"]) == 5, "全部模式下应有 5 项"
+        print("[gui] 修改日期筛选(早于/晚于/介于/边界/格式兼容)✔")
+
+        # 3.6) 含子文件夹递归搜索(子目录里的 Day 01/Day 02 应被找到)
+        app.var_frecursive.set(True)
+        app.var_fmode.set("晚于")
+        app.var_fdate_a.set("2026-09-01")
+        app._filter_changed()
+        assert pump(root, 10, lambda: app._in_search), "递归搜索超时"
+        v = visible()
+        assert {"Travel Notes/Trip Recording Day 01.mp3",
+                "Travel Notes/Day 02.mp3",
+                "Future Plan.txt"} <= v, v
+        assert not any("readme" in x or "Old Notes" in x for x in v)
+        assert "搜索完成:共 4 个文件" in app.lbl_fhint.cget("text"), \
+            app.lbl_fhint.cget("text")
+        print("[gui] 递归搜索(Search API,相对路径展示)✔")
+
+        # 回退路径:禁用 Search API → 客户端递归遍历,结果一致
+        import test_e2e as te
+        te.MOCK_STATE["search_enabled"] = False
+        app._start_search()
+        assert pump(root, 10, lambda: "遍历完成" in app.lbl_fhint.cget("text")), \
+            app.lbl_fhint.cget("text")
+        te.MOCK_STATE["search_enabled"] = True
+        assert "Travel Notes/Day 02.mp3" in visible()
+        print("[gui] Search API 不可用时回退为客户端遍历 ✔")
+
+        # 退出搜索视图,恢复浏览
+        app.go_up()
+        assert pump(root, 10, lambda: not app._in_search
+                    and getattr(app, "cwd", "") == "/media"), "退出搜索超时"
+        app.var_frecursive.set(False)
+        app.var_fmode.set("全部")
+        app._filter_changed()
+        print("[gui] 退出搜索视图恢复浏览 ✔")
+
+        # 4) 进入子目录选中下载
+        app.load_dir("/media/Travel Notes")
+        assert pump(root, 10, lambda: getattr(app, "cwd", "") == "/media/Travel Notes")
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
         mp3_row = texts["Trip Recording Day 01.mp3"]
-        print("[gui] 修改日期筛选(早于/晚于/介于/边界/格式兼容)✔")
 
         # 4) 选中并下载
         app.tree.selection_set(mp3_row)

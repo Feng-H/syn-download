@@ -34,7 +34,44 @@ def _ts(y, m, d):
     return calendar.timegm((y, m, d, 12, 0, 0))
 
 
+# 虚拟目录树:list_dir / 递归搜索共用
+MOCK_STATE = {"search_enabled": True}
+FS = {
+    "/media": [
+        {"name": "Travel Notes", "path": "/media/Travel Notes", "isdir": True},
+        {"name": "readme.txt", "path": "/media/readme.txt", "isdir": False,
+         "additional": {"size": 5, "time": _tobj(2026, 8, 1)}},
+        {"name": "Old Notes 2025.txt", "path": "/media/Old Notes 2025.txt",
+         "isdir": False,
+         "additional": {"size": 9, "time": _ts(2025, 12, 31)}},
+        {"name": "Future Plan.txt", "path": "/media/Future Plan.txt",
+         "isdir": False, "additional": {"size": 3, "time": _tobj(2026, 12, 25)}},
+        {"name": "No Time Stamp.bin", "path": "/media/No Time Stamp.bin",
+         "isdir": False, "additional": {"size": 1}},
+    ],
+    "/media/Travel Notes": [
+        {"name": "Trip Recording Day 01.mp3", "path": REMOTE_PATH, "isdir": False,
+         "additional": {"size": SIZE, "time": _tobj(2026, 9, 10)}},
+        {"name": "Day 02.mp3", "path": "/media/Travel Notes/Day 02.mp3",
+         "isdir": False, "additional": {"size": 1000, "time": _tobj(2026, 9, 11)}},
+    ],
+}
+
+
+def _walk_files(folder):
+    """递归收集 folder 下全部文件(mock 搜索用)。"""
+    out = []
+    for e in FS.get(folder, []):
+        if e["isdir"]:
+            out.extend(_walk_files(e["path"]))
+        else:
+            out.append(e)
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
+    _tasks = {}   # 搜索任务:taskid → folder
+
     def _json(self, obj):
         body = json.dumps(obj).encode()
         self.send_response(200)
@@ -69,20 +106,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"success": True, "data": {"shares": [
                     {"name": "media", "path": "/media"}]}})
             folder = json.loads(q.get("folder_path", ['""'])[0])
-            return self._json({"success": True, "data": {"files": [
-                {"name": "Travel Notes", "path": f"{folder}/Travel Notes", "isdir": True},
-                {"name": "readme.txt", "path": f"{folder}/readme.txt", "isdir": False,
-                 "additional": {"size": 5, "time": _tobj(2026, 8, 1)}},
-                {"name": "Trip Recording Day 01.mp3",
-                 "path": REMOTE_PATH, "isdir": False,
-                 "additional": {"size": SIZE, "time": _tobj(2026, 9, 10)}},
-                {"name": "Old Notes 2025.txt", "path": f"{folder}/Old Notes 2025.txt",
-                 "isdir": False,
-                 "additional": {"size": 9, "time": _ts(2025, 12, 31)}},
-                {"name": "Future Plan.txt", "path": f"{folder}/Future Plan.txt",
-                 "isdir": False, "additional": {"size": 3, "time": _tobj(2026, 12, 25)}},
-                {"name": "No Time Stamp.bin", "path": f"{folder}/No Time Stamp.bin",
-                 "isdir": False, "additional": {"size": 1}}]}})
+            return self._json({"success": True, "data": {"files": FS.get(folder, [])}})
+
+        if api == "SYNO.FileStation.Search":
+            if not MOCK_STATE.get("search_enabled", True):
+                return self._json({"success": False, "error": {"code": 405}})
+            method = q.get("method", [""])[0]
+            if method == "start":
+                folder = json.loads(q.get("folder_path", ['""'])[0])
+                Handler._tasks["t1"] = folder
+                return self._json({"success": True, "data": {"taskid": "t1"}})
+            if method == "list":
+                folder = Handler._tasks.get(q.get("taskid", [""])[0], "/media")
+                files = _walk_files(folder)
+                return self._json({"success": True, "data": {
+                    "total": len(files), "finished": True, "files": files}})
+            if method == "stop":
+                return self._json({"success": True, "data": {}})
 
         if api == "SYNO.FileStation.Download":
             path = json.loads(q.get("path", ['""'])[0])
@@ -132,12 +172,28 @@ def main():
     files = c.list_dir("/media")
     assert any(f["name"] == "Travel Notes" and f["isdir"] for f in files)
     mtimes = {f["name"]: f["mtime"] for f in files}
-    assert mtimes["Trip Recording Day 01.mp3"] == "2026-09-10", \
-        f"嵌套对象格式未归一化: {mtimes['Trip Recording Day 01.mp3']!r}"
-    assert mtimes["Old Notes 2025.txt"] == "2025-12-31", \
-        f"unix 数值格式未归一化: {mtimes['Old Notes 2025.txt']!r}"
+    assert mtimes["readme.txt"] == "2026-08-01", "嵌套对象格式未归一化"
+    assert mtimes["Old Notes 2025.txt"] == "2025-12-31", "unix 数值格式未归一化"
     assert mtimes["No Time Stamp.bin"] is None, "无时间字段应为 None"
+    sub = {f["name"]: f["mtime"] for f in c.list_dir("/media/Travel Notes")}
+    assert sub["Trip Recording Day 01.mp3"] == "2026-09-10"
     print("[e2e] mtime 归一化(对象/数值/缺失)✔")
+
+    # 4) 递归搜索(Search API)与回退(客户端遍历)
+    res = c.search_by_time("/media")
+    names = {r["name"] for r in res}
+    assert {"readme.txt", "Trip Recording Day 01.mp3", "Day 02.mp3"} <= names
+    assert all(not r["isdir"] for r in res), "搜索结果应只含文件"
+    MOCK_STATE["search_enabled"] = False
+    try:
+        res2 = c.walk_files("/media", date_from="2026-09-01",
+                            date_to="2026-09-30")
+        assert {r["name"] for r in res2} == \
+            {"Trip Recording Day 01.mp3", "Day 02.mp3", "No Time Stamp.bin"}, \
+            f"回退遍历筛选不符(无时间戳文件应保留): {[r['name'] for r in res2]}"
+    finally:
+        MOCK_STATE["search_enabled"] = True
+    print("[e2e] 递归搜索(Search API)与客户端遍历回退 ✔")
     print("[e2e] list_share / list(含空格/括号路径)✔")
 
     out = Path(tempfile.mkdtemp()) / "out.mp3"

@@ -68,8 +68,8 @@ def main():
         print("[cred] 启动自动登录(保存的密码)✔ →", app.lbl_login.cget("text"))
 
         # 3) 下载仍正常(进入目录 → 选中 → 下载)
-        app.load_dir("/media")
-        assert pump(root, 10, lambda: getattr(app, "cwd", "") == "/media")
+        app.load_dir("/media/Travel Notes")
+        assert pump(root, 10, lambda: getattr(app, "cwd", "") == "/media/Travel Notes")
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
         app.tree.selection_set(texts["Trip Recording Day 01.mp3"])
         app.download_selected()

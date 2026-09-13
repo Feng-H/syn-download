@@ -36,7 +36,7 @@ try:
 except ImportError:
     pass
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 DEFAULT_HOST = ""                     # 留空:首次使用时询问,并记住上次地址
 SESSION_FILE = Path.home() / ".syn_dl_session.json"
 UA = "syn-dl/1.0"
@@ -264,6 +264,73 @@ class SynClient:
                         "size": add.get("size"),
                         "mtime": _normalize_mtime(add)})   # 'YYYY-MM-DD' 或 None
         return out
+
+    # ---------- 递归搜索 ----------
+    def search_by_time(self, folder, date_from=None, date_to=None):
+        """
+        在 folder(含全部子目录)按修改时间递归搜索文件(服务端 Search API)。
+        date_from/date_to:'YYYY-MM-DD',均为含当天的边界。
+        返回文件条目列表(name/path/isdir/size/mtime)。
+        """
+        params = {"api": "SYNO.FileStation.Search", "version": "2",
+                  "method": "start", "folder_path": json.dumps(folder),
+                  "pattern": "*", "filetype": "file"}
+        if date_from:
+            params["mtime_from"] = int(time.mktime(
+                time.strptime(date_from, "%Y-%m-%d")))
+        if date_to:
+            params["mtime_to"] = int(time.mktime(
+                time.strptime(date_to + " 23:59:59", "%Y-%m-%d %H:%M:%S")))
+        taskid = self._api(params)["taskid"]
+        out, offset, pages = [], 0, 0
+        try:
+            while pages < 200:                     # 防御:最多取 200 页
+                pages += 1
+                data = self._api({"api": "SYNO.FileStation.Search", "version": "2",
+                                  "method": "list", "taskid": taskid, "offset": offset,
+                                  "limit": 1000, "sort_by": "name",
+                                  "sort_direction": "asc", "filetype": "file",
+                                  "additional": '["size","time"]'})
+                for f in data.get("files", []):
+                    add = f.get("additional", {})
+                    out.append({"name": f.get("name", ""), "path": f["path"],
+                                "isdir": False, "size": add.get("size"),
+                                "mtime": _normalize_mtime(add)})
+                offset += len(data.get("files", []))
+                total = data.get("total")
+                if data.get("finished") or (total is not None and offset >= total) \
+                        or not data.get("files"):
+                    break
+            return out
+        finally:
+            try:
+                self._api({"api": "SYNO.FileStation.Search", "version": "2",
+                           "method": "stop", "taskid": taskid})
+            except Exception:
+                pass
+
+    def walk_files(self, folder, date_from=None, date_to=None):
+        """Search API 不可用时的回退:客户端递归遍历(广度优先,4 并发)。"""
+        def ok(mdate):
+            if not mdate:
+                return True
+            if date_from and mdate < date_from:
+                return False
+            if date_to and mdate > date_to:
+                return False
+            return True
+
+        results, dirs = [], [folder]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            while dirs:
+                batch, dirs = dirs, []
+                for entries in pool.map(self.list_dir, batch):
+                    for e in entries:
+                        if e["isdir"]:
+                            dirs.append(e["path"])
+                        elif ok(e.get("mtime")):
+                            results.append(e)
+        return results
 
     def open_download(self, path, extra_headers=None):
         """发起文件下载请求(流式)。返回 requests.Response。"""

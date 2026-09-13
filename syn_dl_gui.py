@@ -11,7 +11,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -110,6 +110,9 @@ class App:
         self.tasks = {}
         self.entries = []          # 当前目录条目(与浏览表行号对应)
         self._loading_dir = False
+        self._in_search = False    # 当前处于"搜索结果"视图
+        self._search_seq = 0       # 递增序号,丢弃过期的搜索结果
+        self._search_after = None  # 防抖定时器
         # 所有后台线程只往此队列丢事件,主线程统一消费——绝不在工作线程碰 tkinter
         self.events = queue.Queue()
 
@@ -179,11 +182,15 @@ class App:
         self.var_fdate_b = tk.StringVar()
         e_b = ttk.Entry(fbar, textvariable=self.var_fdate_b, width=11)
         e_b.pack(side="left", padx=2)
+        self.var_frecursive = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fbar, text="含子文件夹(整棵树搜索)",
+                        variable=self.var_frecursive,
+                        command=self._filter_changed).pack(side="left", padx=(10, 4))
         self.lbl_fhint = ttk.Label(fbar, text="格式 YYYY-MM-DD", foreground="#888")
         self.lbl_fhint.pack(side="left", padx=10)
-        self.cmb_fmode.bind("<<ComboboxSelected>>", lambda _e: self._render_tree())
+        self.cmb_fmode.bind("<<ComboboxSelected>>", lambda _e: self._filter_changed())
         for ent in (e_a, e_b):
-            ent.bind("<KeyRelease>", lambda _e: self._render_tree())
+            ent.bind("<KeyRelease>", lambda _e: self._filter_changed())
 
         cols = ("type", "size")
         self.tree = ttk.Treeview(browse, columns=cols, selectmode="extended")
@@ -394,7 +401,10 @@ class App:
 
     # ---------------------------------------------------------------- 目录浏览
     def load_dir(self, path):
-        if not self.client or self._loading_dir:
+        if not self.client:
+            return
+        if self._loading_dir:
+            self._pending_dir = path   # 忙:记住最新请求,当前加载完成后接着执行
             return
         self._loading_dir = True
         self.lbl_path.config(text=f"{path}  (加载中…)")
@@ -426,17 +436,39 @@ class App:
         if err:
             self.lbl_path.config(text=path or "/")
             messagebox.showerror("读取目录失败", err)
+            self._drain_pending(path)
             return
         self.cwd = path
         self.entries = entries
+        self._in_search = False
         self.lbl_path.config(text=path)
         self._render_tree()
+        self._drain_pending(path)
+
+    def _drain_pending(self, done_path):
+        pending = getattr(self, "_pending_dir", None)
+        self._pending_dir = None
+        if pending and pending != done_path:
+            self.load_dir(pending)
 
     # ---------------------------------------------------------------- 日期筛选与渲染
     def _render_tree(self):
         """按当前筛选条件把 self.entries 渲染到浏览表(iid → entry 映射)。"""
         self.tree.delete(*self.tree.get_children())
         self._row_entry = {}
+        in_search = getattr(self, "_in_search", False)
+        if in_search:
+            # 搜索结果视图:条目已按条件筛好,显示相对路径;"上级"= 返回浏览
+            self.tree.insert("", "end", iid="up",
+                             text="..(返回浏览)", values=("上级", ""))
+            for e in self.entries:
+                size = human(e["size"]) if e.get("size") else ""
+                mtime = str(e.get("mtime") or "")[:10]
+                iid = self.tree.insert(
+                    "", "end", values=("文件", f"{size}  {mtime}" if mtime else size),
+                    text=e.get("rel") or e["name"])
+                self._row_entry[iid] = e
+            return
         if getattr(self, "cwd", "/") != "/":
             self.tree.insert("", "end", iid="up", text="..(上级)", values=("上级", ""))
 
@@ -485,6 +517,92 @@ class App:
             self.lbl_fhint.config(text=f"筛选出 {shown}/{total} 个文件",
                                   foreground="#1e8449")
 
+    # ---------------------------------------------------------------- 递归搜索
+    def _filter_changed(self):
+        """筛选条件变化:递归模式走搜索(防抖),否则本地过滤。"""
+        if self._search_after:
+            self.root.after_cancel(self._search_after)
+            self._search_after = None
+        if self._want_search():
+            self.lbl_fhint.config(text="搜索中…(含子文件夹)", foreground="#888")
+            self._search_after = self.root.after(500, self._start_search)
+        else:
+            self._in_search = False
+            self._render_tree()
+
+    def _want_search(self):
+        if not (self.var_fmode.get() != "全部" and self.var_frecursive.get()
+                and self.client is not None
+                and getattr(self, "cwd", "/") != "/"):
+            return False
+        if self._parse_date(self.var_fdate_a.get()) is None:
+            return False
+        if self.var_fmode.get() == "介于" \
+                and self._parse_date(self.var_fdate_b.get()) is None:
+            return False
+        return True
+
+    def _start_search(self):
+        self._search_after = None
+        if not self._want_search():
+            self._in_search = False
+            self._render_tree()
+            return
+        self._search_seq += 1
+        seq = self._search_seq
+        mode = self.var_fmode.get()
+        a = self._parse_date(self.var_fdate_a.get())
+        b = self._parse_date(self.var_fdate_b.get())
+        if mode == "早于":                       # d < A → 区间上界为 A 前一天
+            frm, to = None, (a - timedelta(days=1)).isoformat()
+        elif mode == "晚于":                     # d > A → 区间下界为 A 后一天
+            frm, to = (a + timedelta(days=1)).isoformat(), None
+        else:
+            frm, to = a.isoformat(), b.isoformat()
+        root_path, client = self.cwd, self.client
+
+        def worker():
+            try:
+                try:
+                    raw = client.search_by_time(root_path, frm, to)
+                    how = "搜索"
+                except SynError:
+                    raw = client.walk_files(root_path, frm, to)   # 回退:客户端遍历
+                    how = "遍历"
+                self.events.put(("search_result", seq, root_path, raw, how, None))
+            except Exception as e:
+                self.events.put(("search_result", seq, root_path, None, None,
+                                 f"{e.__class__.__name__}: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_search(self, seq, root_path, raw, how, err):
+        if seq != self._search_seq:
+            return                              # 过期结果,丢弃
+        if err:
+            self._in_search = False
+            self.lbl_fhint.config(text=f"搜索失败:{err}", foreground="#c0392b")
+            self._render_tree()
+            return
+        mode = self.var_fmode.get()
+        a = self._parse_date(self.var_fdate_a.get())
+        b = self._parse_date(self.var_fdate_b.get())
+        shown = [e for e in raw if self._match_date(e.get("mtime"), mode, a, b)]
+        for e in shown:
+            e["rel"] = e["path"][len(root_path):].lstrip("/") or e["name"]
+        self.entries = shown
+        self._in_search = True
+        self._render_tree()
+        self.lbl_path.config(text=f"搜索结果:{root_path}(含全部子文件夹)")
+        self.lbl_fhint.config(text=f"{how}完成:共 {len(shown)} 个文件",
+                              foreground="#1e8449")
+
+    def _exit_search(self):
+        self._in_search = False
+        self._search_seq += 1                   # 使在途搜索结果失效
+        self.lbl_path.config(text=self.cwd)
+        self.load_dir(self.cwd)
+
     @staticmethod
     def _parse_date(s):
         try:
@@ -507,9 +625,15 @@ class App:
         return start.isoformat() <= d <= end.isoformat()   # 介于(含两端)
 
     def refresh_dir(self):
+        if getattr(self, "_in_search", False):
+            self._exit_search()
+            return
         self.load_dir(getattr(self, "cwd", "/"))
 
     def go_up(self):
+        if getattr(self, "_in_search", False):
+            self._exit_search()
+            return
         cwd = getattr(self, "cwd", "/")
         if cwd == "/":
             return
@@ -590,6 +714,8 @@ class App:
                     self._after_cache(ev[1], ev[2], ev[3])
                 elif kind == "dir_loaded":
                     self._fill_dir(ev[1], ev[2], ev[3])
+                elif kind == "search_result":
+                    self._show_search(ev[1], ev[2], ev[3], ev[4], ev[5])
                 elif kind == "logged_out":
                     self._mark_logged_out("已退出登录" + ("(密码已忘记)" if ev[1]
                                                            else "(密码已保留)"))
