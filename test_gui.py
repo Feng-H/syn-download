@@ -83,8 +83,8 @@ def main():
         assert "Trip Recording Day 01.mp3" in texts
         print("[gui] 浏览 /media ✔ 找到目标文件")
 
-        # 3.5) 修改日期筛选(mock 文件日期:2025-12-31 / 2026-08-01 /
-        #      2026-09-10 / 2026-12-25)
+        # 3.5) 修改日期筛选(mock 文件:2025-12-31(数值格式)/ 2026-08-01 /
+        #      2026-09-10 / 2026-12-25 / 无时间戳)
         def visible():
             return {app.tree.item(i)["text"] for i in app.tree.get_children()}
 
@@ -95,6 +95,7 @@ def main():
         assert "Old Notes 2025.txt" in v and "Trip Recording Day 01.mp3" not in v
         assert "readme.txt" not in v and "Future Plan.txt" not in v
         assert "Travel Notes/" in v, "目录不应被筛选掉"
+        assert "No Time Stamp.bin" in v, "无时间戳的文件应保留显示"
 
         app.var_fmode.set("晚于")
         app.var_fdate_a.set("2026-09-01")
@@ -110,7 +111,7 @@ def main():
         v = visible()
         assert {"readme.txt", "Trip Recording Day 01.mp3"} <= v
         assert "Old Notes 2025.txt" not in v and "Future Plan.txt" not in v
-        assert "筛选出 2/4" in app.lbl_fhint.cget("text"), app.lbl_fhint.cget("text")
+        assert "筛选出 3/5" in app.lbl_fhint.cget("text"), app.lbl_fhint.cget("text")
 
         # 日期 A>B 自动交换
         app.var_fdate_a.set("2026-09-30")
@@ -128,10 +129,10 @@ def main():
         app.var_fmode.set("全部")
         app._render_tree()
         assert len([i for i in app.tree.get_children()
-                    if i != "up"]) == 5, "全部模式下应有 5 项"
+                    if i != "up"]) == 6, "全部模式下应有 6 项(1 目录 + 5 文件)"
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
         mp3_row = texts["Trip Recording Day 01.mp3"]
-        print("[gui] 修改日期筛选(早于/晚于/介于/边界)✔")
+        print("[gui] 修改日期筛选(早于/晚于/介于/边界/格式兼容)✔")
 
         # 4) 选中并下载
         app.tree.selection_set(mp3_row)

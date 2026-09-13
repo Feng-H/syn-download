@@ -469,7 +469,7 @@ class App:
                 continue
             name = e["name"] + ("/" if e["isdir"] else "")
             size = human(e["size"]) if e.get("size") else ""
-            mtime = date.fromtimestamp(e["mtime"]).isoformat() if e.get("mtime") else ""
+            mtime = str(e.get("mtime") or "")[:10]
             iid = self.tree.insert(
                 "", "end", values=("文件夹" if e["isdir"] else "文件",
                                    f"{size}  {mtime}" if mtime else size),
@@ -493,18 +493,18 @@ class App:
             return None
 
     @staticmethod
-    def _match_date(mtime, mode, start, end):
-        if mode == "全部" or not mtime:
-            return True
-        try:
-            d = date.fromtimestamp(mtime)
-        except Exception:
-            return True
+    def _match_date(mdate, mode, start, end):
+        """mdate 为 'YYYY-MM-DD' 字符串(由核心归一化);字典序比较等价于日期比较。"""
+        if mode == "全部" or not mdate:
+            return True                 # 无时间信息的文件保留显示
+        d = str(mdate)[:10]
+        if len(d) != 10 or d[4] != "-":
+            return True                 # 无法识别的格式:保留显示,不隐藏
         if mode == "早于":
-            return d < start
+            return d < start.isoformat()
         if mode == "晚于":
-            return d > start
-        return start <= d <= end   # 介于(含两端)
+            return d > start.isoformat()
+        return start.isoformat() <= d <= end.isoformat()   # 介于(含两端)
 
     def refresh_dir(self):
         self.load_dir(getattr(self, "cwd", "/"))

@@ -36,7 +36,7 @@ try:
 except ImportError:
     pass
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 DEFAULT_HOST = ""                     # 留空:首次使用时询问,并记住上次地址
 SESSION_FILE = Path.home() / ".syn_dl_session.json"
 UA = "syn-dl/1.0"
@@ -111,6 +111,25 @@ class AbortDownload(Exception):
 
 
 # ---------------------------------------------------------------- DSM API 客户端
+def _normalize_mtime(add):
+    """
+    归一化 File Station 的修改时间。真实 DSM 7 返回:
+      "additional": {"time": {"mtime": "2026-09-10 12:00:00", ...}}
+    亦有数值(unix 秒)或纯字符串形态。统一为 'YYYY-MM-DD' 字符串
+    (按天粒度;字符串日期无时区换算问题,unix 秒按本机时区取日期)。
+    """
+    import datetime
+    t = add.get("time")
+    if isinstance(t, dict):
+        t = t.get("mtime")
+    if t is None:
+        return None
+    if isinstance(t, (int, float)):
+        return datetime.datetime.fromtimestamp(t).date().isoformat()
+    s = str(t).strip()
+    return s[:10] if len(s) >= 10 else (s or None)
+
+
 class SynClient:
     def __init__(self, host, timeout=(10, 60)):
         raw = host.strip().rstrip("/")
@@ -243,7 +262,7 @@ class SynClient:
             out.append({"name": f.get("name", ""), "path": f["path"],
                         "isdir": bool(f.get("isdir")),
                         "size": add.get("size"),
-                        "mtime": add.get("time")})   # 修改时间(unix 秒)
+                        "mtime": _normalize_mtime(add)})   # 'YYYY-MM-DD' 或 None
         return out
 
     def open_download(self, path, extra_headers=None):

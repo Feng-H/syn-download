@@ -22,8 +22,14 @@ GOOD_SID = "test-sid-12345"
 REMOTE_PATH = "/media/Travel Notes/Trip Recording Day 01.mp3"
 
 
+def _tobj(y, m, d):
+    """真实 DSM 7 的 additional.time 形态:嵌套对象 + 格式化时间字符串。"""
+    s = f"{y:04d}-{m:02d}-{d:02d} 12:00:00"
+    return {"atime": s, "crtime": s, "ctime": s, "mtime": s}
+
+
 def _ts(y, m, d):
-    """指定日期正午(UTC)的 unix 时间戳,用作 mock 修改时间。"""
+    """指定日期正午(UTC)的 unix 时间戳(兼容分支:部分形态直接给数值)。"""
     import calendar
     return calendar.timegm((y, m, d, 12, 0, 0))
 
@@ -66,14 +72,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"success": True, "data": {"files": [
                 {"name": "Travel Notes", "path": f"{folder}/Travel Notes", "isdir": True},
                 {"name": "readme.txt", "path": f"{folder}/readme.txt", "isdir": False,
-                 "additional": {"size": 5, "time": _ts(2026, 8, 1)}},
+                 "additional": {"size": 5, "time": _tobj(2026, 8, 1)}},
                 {"name": "Trip Recording Day 01.mp3",
                  "path": REMOTE_PATH, "isdir": False,
-                 "additional": {"size": SIZE, "time": _ts(2026, 9, 10)}},
+                 "additional": {"size": SIZE, "time": _tobj(2026, 9, 10)}},
                 {"name": "Old Notes 2025.txt", "path": f"{folder}/Old Notes 2025.txt",
-                 "isdir": False, "additional": {"size": 9, "time": _ts(2025, 12, 31)}},
+                 "isdir": False,
+                 "additional": {"size": 9, "time": _ts(2025, 12, 31)}},
                 {"name": "Future Plan.txt", "path": f"{folder}/Future Plan.txt",
-                 "isdir": False, "additional": {"size": 3, "time": _ts(2026, 12, 25)}}]}})
+                 "isdir": False, "additional": {"size": 3, "time": _tobj(2026, 12, 25)}},
+                {"name": "No Time Stamp.bin", "path": f"{folder}/No Time Stamp.bin",
+                 "isdir": False, "additional": {"size": 1}}]}})
 
         if api == "SYNO.FileStation.Download":
             path = json.loads(q.get("path", ['""'])[0])
@@ -122,6 +131,13 @@ def main():
     assert shares[0]["path"] == "/media"
     files = c.list_dir("/media")
     assert any(f["name"] == "Travel Notes" and f["isdir"] for f in files)
+    mtimes = {f["name"]: f["mtime"] for f in files}
+    assert mtimes["Trip Recording Day 01.mp3"] == "2026-09-10", \
+        f"嵌套对象格式未归一化: {mtimes['Trip Recording Day 01.mp3']!r}"
+    assert mtimes["Old Notes 2025.txt"] == "2025-12-31", \
+        f"unix 数值格式未归一化: {mtimes['Old Notes 2025.txt']!r}"
+    assert mtimes["No Time Stamp.bin"] is None, "无时间字段应为 None"
+    print("[e2e] mtime 归一化(对象/数值/缺失)✔")
     print("[e2e] list_share / list(含空格/括号路径)✔")
 
     out = Path(tempfile.mkdtemp()) / "out.mp3"
