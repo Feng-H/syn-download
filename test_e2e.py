@@ -141,7 +141,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "audio/mpeg")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if MOCK_STATE.get("slow"):           # 慢速滴流:让测试能观察下载中途状态
+                import time as _time
+                for i in range(0, len(body), 100 * 1024):
+                    self.wfile.write(body[i:i + 100 * 1024])
+                    _time.sleep(0.02)
+            else:
+                self.wfile.write(body)
             return
 
         return self._json({"success": False, "error": {"code": 101}})

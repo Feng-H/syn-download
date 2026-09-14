@@ -39,6 +39,7 @@ class Task:
         self.status = "连接中…"
         self.done_bytes = 0
         self.size = 0
+        self.dl = None                 # 探测完成后由 _run 赋值,进度读取总大小
         self.failures = 0
         self.finished = False
         self.stop_requested = threading.Event()
@@ -56,7 +57,11 @@ class Task:
 
     # ---- 供 RangeDownloader 的回调(下载线程内执行,只写数字不碰 UI)----
     def _progress(self, done):
+        if self.dl is not None:
+            self.size = self.dl.size    # 探测完成即有总大小,中途就能算百分比
         self.done_bytes = done
+        if self.status == "连接中…":
+            self.status = "下载中"
         now = time.time()
         if now - self._last_t >= 1.0:
             self.speed = (done - self._last_bytes) / (now - self._last_t)
@@ -82,6 +87,7 @@ class Task:
                                  reauth=lambda: self.client.ensure_sid(force=True),
                                  progress=self._progress,
                                  abort_check=self._abort_check)
+            self.dl = dl
             try:
                 dl.run()
             except KeyboardInterrupt:

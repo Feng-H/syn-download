@@ -172,17 +172,24 @@ def main():
         texts = {app.tree.item(i)["text"]: i for i in app.tree.get_children()}
         mp3_row = texts["Trip Recording Day 01.mp3"]
 
-        # 4) 选中并下载
+        # 4) 选中并下载(慢速模式:验证下载中途进度/总大小/状态实时可见)
+        import test_e2e as te2
+        te2.MOCK_STATE["slow"] = True
         app.tree.selection_set(mp3_row)
         app.download_selected()
         assert len(app.tasks) == 1, "任务未创建"
         task = next(iter(app.tasks.values()))
+        assert pump(root, 10, lambda: task.done_bytes > 0
+                    and task.size == SIZE), "下载中途未更新进度/总大小(0% 回归)"
+        assert task.status == "下载中", f"中途状态异常: {task.status}"
         assert pump(root, 30, lambda: task.finished), "下载超时"
+        te2.MOCK_STATE["slow"] = False
         dest = tmp / "Trip Recording Day 01.mp3"
         got = hashlib.md5(dest.read_bytes()).hexdigest()
         assert got == MD5, f"GUI 下载 md5 不匹配 {got} != {MD5}"
         print(f"[gui] 下载完成 md5 一致 ✔  ({SIZE} B)")
         assert task.status.startswith("完成"), f"任务状态异常: {task.status}"
+        print("[gui] 下载中途进度/总大小/状态实时更新 ✔")
 
         # 5) 再次下载同一文件 → 跳过(已存在且无状态文件)
         app.tree.selection_set(mp3_row)
